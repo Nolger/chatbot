@@ -2,7 +2,7 @@
 from flask import Flask, request, jsonify
 import os
 import logging
-import json # <--- ¡AQUÍ ESTÁ LA CORRECCIÓN!
+import json
 
 from services import bot_logic
 from services import whatsapp
