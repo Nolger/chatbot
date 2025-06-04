@@ -1,11 +1,14 @@
-# services/bot_logic.py
+# chatbot/services/bot_logic.py
 import json
 import re
 import logging
+from services import db_manager # Importar db_manager
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
+# user_states se mantiene en memoria para el flujo conversacional.
+# El estado de control (bot/agente) se maneja en la DB.
 user_states = {} 
 
 def get_bot_response_from_engine(user_message, user_id="default_user"):
@@ -17,6 +20,7 @@ def get_bot_response_from_engine(user_message, user_id="default_user"):
     processed_message = user_message.lower().strip()
     current_state = user_states.get(user_id)
 
+    # Lógica de pedido en curso
     if current_state and current_state.get("action") == "collecting_order_data":
         step = current_state["step"]
         order_details = current_state["order_details"]
@@ -32,7 +36,7 @@ def get_bot_response_from_engine(user_message, user_id="default_user"):
         elif step == "awaiting_address":
             order_details["address"] = user_message
             response_text = (
-                "Perfecto. 👍 El Kit Óscar Camarra tiene un costo de [PRECIO DEL KIT]. " # ¡¡¡REEMPLAZA [PRECIO DEL KIT]!!!
+                "Perfecto. 👍 El Kit Óscar Camarra tiene un costo de [PRECIO DEL KIT]. "
                 "Puedes pagar contraentrega o por transferencia bancaria. ¿Cuál prefieres?"
             )
             current_state["step"] = "awaiting_payment_method"
@@ -48,7 +52,14 @@ def get_bot_response_from_engine(user_message, user_id="default_user"):
             elif processed_message == "payment_transferencia":
                 order_details["payment_method"] = "Transferencia Bancaria"
             else: 
-                order_details["payment_method"] = user_message 
+                order_details["payment_method"] = user_message # Si el usuario escribe algo diferente
+
+            # Aquí se guarda el pedido en la base de datos
+            chat_id = db_manager.get_or_create_chat(user_id) # Asegurarse de tener el chat_id
+            if chat_id:
+                db_manager.save_order(chat_id, user_id, order_details) # Guardar el pedido
+            else:
+                logger.error(f"No se pudo obtener/crear chat_id para {user_id} al guardar el pedido.")
             
             response_text = (
                 "¡Tu pedido del Kit Óscar Camarra ha sido registrado! 🎉\n\n"
@@ -68,15 +79,17 @@ def get_bot_response_from_engine(user_message, user_id="default_user"):
             logger.info(f"  Teléfono (WhatsApp ID): {user_id}")
             logger.info("-------------------------------------------------")
 
-            del user_states[user_id] 
-            message_type = "buttons" # Aún ofrecemos volver al menú tras completar el pedido.
+            del user_states[user_id] # Finaliza el estado del pedido
+            message_type = "buttons"
             buttons = [
                 {"type": "reply", "reply": {"id": "menu_principal", "title": "Menú Principal 🏠"}}
             ]
         
+        # Guardar el estado actualizado si la conversación continúa
         if user_id in user_states: 
              user_states[user_id] = current_state
     
+    # Lógica de menú principal y opciones
     else:
         if processed_message in ["hola", "menú", "menu", "inicio", "menu_principal", "menu_principal_parte1"]:
             message_type = "list" 
@@ -143,34 +156,37 @@ def get_bot_response_from_engine(user_message, user_id="default_user"):
                 {"type": "reply", "reply": {"id": "menu_principal", "title": "Menú Principal 🏠"}}
             ]
 
-        # --- MODIFICACIÓN AQUÍ ---
+        # MODIFICACIÓN: Estas opciones ahora transfieren el control a un agente
         elif processed_message == "opt_personalizar":
-            message_type = "text" # Cambiado a solo texto
+            db_manager.set_chat_control(user_id, 'agent') # Cambia el control a agente
+            message_type = "text"
             response_text = (
                 "🎨 ¿Quieres una prenda única? ¡Genial!\n"
                 "Para personalizar un producto, te conectaré con uno de nuestros asesores expertos. "
                 "Ellos te guiarán en el proceso. 🧑‍🎨\n\n"
                 "Por favor, espera un momento."
             )
-            buttons = None # No se ofrecen botones
+            buttons = None 
 
         elif processed_message == "opt_consultar_pedido":
-            message_type = "text" # Cambiado a solo texto
+            db_manager.set_chat_control(user_id, 'agent') # Cambia el control a agente
+            message_type = "text"
             response_text = (
                 "🚚 Para consultar el estado de tu pedido, un asesor te atenderá en breve.\n\n"
                 "Ten en cuenta que, dependiendo de la hora de tu solicitud y la disponibilidad, "
                 "la entrega puede ser en horas o al día siguiente hábil.\n\n"
                 "Un asesor se comunicará contigo por este chat. ⏳"
             )
-            buttons = None # No se ofrecen botones
+            buttons = None 
 
         elif processed_message == "opt_hablar_asesor":
-            message_type = "text" # Cambiado a solo texto
+            db_manager.set_chat_control(user_id, 'agent') # Cambia el control a agente
+            message_type = "text" 
             response_text = (
                 "💬 ¡Claro! Estoy conectándote con un asesor para que pueda atender tu solicitud personalmente.\n\n"
                 "Por favor, espera unos momentos. Agradecemos tu paciencia. 🙏"
             )
-            buttons = None # No se ofrecen botones
+            buttons = None 
         
     return {
         "message_type": message_type,
@@ -181,8 +197,23 @@ def get_bot_response_from_engine(user_message, user_id="default_user"):
 
 def get_parsed_bot_response(user_message, user_id="default_user"):
     logger.info(f"Procesando mensaje/botón ID: '{user_message}' para usuario '{user_id}'")
+    
+    # Primero, verificar si el chat está en modo agente
+    chat_id = db_manager.get_or_create_chat(user_id) # Asegura que el chat_id exista
+    if chat_id:
+        control_mode = db_manager.get_chat_control_mode(chat_id)
+        if control_mode == 'agent':
+            logger.info(f"Chat para {user_id} está en modo agente. El bot no responderá.")
+            # Si está en modo agente, el bot no debe generar una respuesta automática.
+            # En su lugar, el mensaje debe ser visible para el agente en el panel.
+            return {
+                "message_type": "none", # Un tipo que indica que el bot no debe responder
+                "text": "",
+                "buttons": None,
+                "list_options": None
+            }
+
+    # Si no está en modo agente, proceder con la lógica del bot
     structured_response = get_bot_response_from_engine(user_message, user_id)
     logger.info(f"Respuesta estructurada generada: {structured_response}")
     return structured_response
-
-# (El bloque if __name__ == "__main__" para pruebas se mantiene igual)

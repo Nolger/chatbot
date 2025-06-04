@@ -2,3 +2,5 @@
 Flask
 dotenv
 requests
+psycopg2-binary
+SQLAlchemy
