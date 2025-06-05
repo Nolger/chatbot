@@ -4,3 +4,4 @@ dotenv
 requests
 psycopg2-binary
 SQLAlchemy
+Flask-CORS

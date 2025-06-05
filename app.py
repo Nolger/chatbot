@@ -3,17 +3,20 @@ from flask import Flask, request, jsonify
 import os
 import logging
 import json
+import json
+from flask_cors import CORS
 
 from services import bot_logic
 from services import whatsapp
 from services import db_manager # Importar el nuevo módulo de DB
 
 app = Flask(__name__)
+CORS(app)
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
-VERIFY_TOKEN = os.getenv("WHATSAPP_ACCESS_TOKEN")
+VERIFY_TOKEN = os.getenv("VERIFY_TOKEN")
 
 # Inicializar la base de datos al inicio de la aplicación
 with app.app_context():
@@ -240,6 +243,7 @@ def update_order_status(order_id):
     finally:
         if conn:
             conn.close()
+
 
 
 if __name__ == "__main__":
